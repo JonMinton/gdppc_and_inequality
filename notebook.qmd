@@ -1,0 +1,333 @@
+---
+title: "gdppc_and_inequality"
+author: "Jon Minton"
+format: docx
+editor: visual
+---
+
+## Background 
+
+I'm interested in the extent to which inequality within country can explain differences between the observed life expectancy in a population, and the life expectancy predicted by the population's GDP per capita.
+
+Danny Dorling kindly supplied/sourced some data that should allow this area can be investigated
+
+## Data and packages 
+
+```{r}
+library(here)
+library(tidyverse)
+
+dta_gdp <- readxl::read_excel(
+    "data-raw/Jon_Data_2.xlsx", 
+    sheet = "GDP", 
+    range = "C5:AG164"
+  ) %>% 
+  rename(country = `Row Labels`) %>% 
+  pivot_longer(
+    -country, 
+    names_to = "year", 
+    values_to = "gdp_pc"
+  )
+
+dta_gini <- readxl::read_excel(
+  "data-raw/Jon_Data_2.xlsx", 
+  sheet = "GINI",
+  range = "E5:AZ164"
+  ) %>% 
+  rename(country = `Row Labels`) %>% 
+  pivot_longer(
+    -country, 
+    names_to = "year", 
+    values_to = "gini"
+  ) # much to interpolate here 
+
+dta_e0 <- readxl::read_excel(
+  "data-raw/Jon_Data_2.xlsx",
+  sheet = "Life Expectancy", 
+  range = "G5:CE164"
+) %>% 
+  select(-c("Notes", "Country code", "Type", "Parent code")) %>% 
+  rename(country = `Region, subregion, country or area *`) %>% 
+  pivot_longer(-country, names_to = "year", values_to = "e0")
+
+```
+
+The next tasks are:
+
+1.  [x] Interpolate values for dta_gini
+2.  [x] Join the three datasets for common countries
+
+## Interpolate gini 
+
+```{r}
+
+# test_df1 <- tibble(
+#   year = 1992:2010,
+#   gini = c(rep(NA, 5), 20, rep(NA, 4), 31, rep(NA, 4), 28, rep(NA, 3))
+# )
+# 
+# approx(test_df1$year, test_df1$gini, test_df1$year)
+ 
+do_interpolation <- function(df){
+  approx(df$year, df$gini, df$year)$y
+}
+# countgaps(tmp)
+
+dta_gini_interp <- 
+  dta_gini %>% 
+    group_by(country) %>% 
+    arrange(year) %>% 
+    nest() %>% 
+    mutate(gini_interp = map(data, possibly(do_interpolation, otherwise = NULL))) %>%
+    filter(!is.null(gini_interp)) %>% 
+    mutate(data_combined = map2(data, gini_interp, ~ .x %>% mutate(gini_interp = .y))) %>% 
+    select(country, data_combined) %>% 
+    unnest(cols = c(data_combined)) %>% 
+    select(country, year, gini = gini_interp) %>% 
+    ungroup()
+  
+dta_gini_interp
+
+```
+
+So we can now combine the three values
+
+```{r}
+dta_combined <- 
+  dta_gini_interp %>% 
+    inner_join(dta_e0) %>% 
+    inner_join(dta_gdp) %>% 
+    filter(complete.cases(.))
+
+dta_combined
+
+
+```
+
+## Analysis proper
+
+First let's look at relationship between e0 and gdp_pc at five year intervals
+
+```{r}
+dta_combined %>% 
+  filter(year %in% seq(1990, 2015, by = 5)) %>% 
+  ggplot(aes(x = log(gdp_pc), y = e0)) + 
+  facet_wrap(~year) + 
+  geom_point() + 
+  stat_smooth(method = "lm", se = FALSE) + 
+  labs(x = "Log of GDP per capita", y = "Life expectancy at birth",
+       title = "Life expectancy at birth as a function of log GDP pc")
+```
+
+So what are the residuals?
+
+```{r}
+mod_gdp_pc_resid <- 
+  dta_combined %>% 
+    filter(year %in% seq(1990, 2015, by = 5)) %>% 
+    group_by(year) %>% 
+    nest() %>% 
+    mutate(lm_e0_gdp = map(data, ~lm(e0 ~ log(gdp_pc), data = .))) %>% 
+    mutate(dta_aug = map2(lm_e0_gdp, data, broom::augment)) %>% 
+    select(year, dta_aug) %>% 
+    unnest(cols = dta_aug)  
+  
+mod_gdp_pc_resid 
+```
+
+What does the residual pattern look like ?
+
+```{r}
+mod_gdp_pc_resid %>% 
+  ggplot(aes(log(gdp_pc), .resid)) + 
+  facet_wrap(~year) + 
+  geom_point() + 
+  geom_hline(yintercept = 0) + 
+  labs(x = "Log GDP pc", y = "Residuals of e0 against log gdp pc model")
+```
+
+So, for each year, which countries have the highest residuals?
+
+```{r}
+mod_gdp_pc_resid %>% 
+  group_by(year) %>% 
+  arrange(desc(.resid), .by_group = TRUE) %>% 
+  top_n(5)
+
+
+
+```
+
+So the top five ('punching above weight') by year are:
+
+-   1990
+
+    -   China
+
+    -   Sri Lanka
+
+    -   Costa Rica
+
+    -   Tunisa
+
+    -   Jamaica
+
+-   1995
+
+    -   China
+
+    -   Sri Lanka
+
+    -   Tunisia
+
+    -   Costa Rica
+
+    -   Honduras
+
+-   2000
+
+    -   China
+
+    -   Albania
+
+    -   Tajikistan
+
+    -   Bangladesh
+
+    -   Armenia
+
+-   2005
+
+    -   Solomon Islands
+
+    -   China
+
+    -   Tajikistan
+
+    -   Albania
+
+    -   Bangladesh
+
+-   2010
+
+    -   Solomon Islands
+
+    -   Tajikistan
+
+    -   Albania
+
+    -   Nicaragua
+
+    -   Bangladesh
+
+-   2015
+
+    -   Cabo Verde
+
+    -   Albania
+
+    -   Tajikistan
+
+    -   Bangladesh
+
+    -   Honduras
+
+Conversely the bottom five ('punching below weight')
+
+```{r}
+mod_gdp_pc_resid %>% 
+  group_by(year) %>% 
+  arrange(desc(.resid), .by_group = TRUE) %>% 
+  top_n(-5)
+
+
+```
+
+-   1990
+
+    -   Luxembourg
+
+    -   Madagascar
+
+    -   Uganda
+
+    -   Botswana
+
+    -   Nigeral
+
+-   1995
+
+    -   Luxembourg
+
+    -   Guinea-Bissau
+
+    -   Zambia
+
+    -   Botswana
+
+    -   Nigeria
+
+-   2000
+
+    -   Zambia
+
+    -   Nigeria
+
+    -   Eswatini
+
+    -   Angola
+
+    -   Botswana
+
+-   2005
+
+    -   Lesotho
+
+    -   Namibia
+
+    -   South Afria
+
+    -   Botswana
+
+-   2010
+
+    -   South Africa
+
+    -   Namibia
+
+    -   Nigeria
+
+    -   Lesotho
+
+    -   Eswatini
+
+-   2015
+
+    -   Botswana
+
+    -   Namibia
+
+    -   Lesotho
+
+    -   Eswatini
+
+    -   Nigeria
+
+## Model of residuals 
+
+Now the final part: To what extent are these residuals explained by inequalities within country?
+
+```{r}
+mod_gdp_pc_resid %>% 
+  ggplot(aes(gini, .resid)) + 
+  facet_wrap(~year) + 
+  geom_point() + 
+  stat_smooth(method = "lm") + 
+  geom_hline(yintercept = 0) + 
+  labs(
+    x = "GINI", y= "Residual of e0 to GDPpc model", 
+    title = "Relationship between GINI and residuals in e0-GDPpc model"
+  )
+```
+
+So, there is a relationship in the expected direction, which on the one hand is fairly modest, but on the other appears to have become more prominent in the 21st century than in the 20th century
