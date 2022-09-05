@@ -5,13 +5,13 @@ format: docx
 editor: visual
 ---
 
-## Background 
+## Background
 
 I'm interested in the extent to which inequality within country can explain differences between the observed life expectancy in a population, and the life expectancy predicted by the population's GDP per capita.
 
 Danny Dorling kindly supplied/sourced some data that should allow this area can be investigated
 
-## Data and packages 
+## Data and packages
 
 ```{r}
 library(here)
@@ -57,7 +57,7 @@ The next tasks are:
 1.  [x] Interpolate values for dta_gini
 2.  [x] Join the three datasets for common countries
 
-## Interpolate gini 
+## Interpolate gini
 
 ```{r}
 
@@ -117,6 +117,19 @@ dta_combined %>%
   stat_smooth(method = "lm", se = FALSE) + 
   labs(x = "Log of GDP per capita", y = "Life expectancy at birth",
        title = "Life expectancy at birth as a function of log GDP pc")
+```
+
+For completeness, here's the same by GDPpc (ppp), rather than the logged value:
+
+```{r}
+dta_combined %>% 
+  filter(year %in% seq(1990, 2015, by = 5)) %>% 
+  ggplot(aes(x = gdp_pc, y = e0)) + 
+  facet_wrap(~year) + 
+  geom_point() + 
+  stat_smooth(method = "lm", se = FALSE) + 
+  labs(x = "GDP per capita", y = "Life expectancy at birth",
+       title = "Life expectancy at birth as a function of GDP pc")
 ```
 
 So what are the residuals?
@@ -313,7 +326,7 @@ mod_gdp_pc_resid %>%
 
     -   Nigeria
 
-## Model of residuals 
+## Model of residuals
 
 Now the final part: To what extent are these residuals explained by inequalities within country?
 
